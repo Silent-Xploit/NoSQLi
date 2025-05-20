@@ -14,5 +14,30 @@
         {"$nin": []},
         {"$or": [{"a": 1}, {"a": 2}]},
         {"$where": "true"}
+    ],
+    "enumerate": [
+        {
+            "type": "databases",
+            "command": "listDatabases",
+            "eval": "db.adminCommand({listDatabases: 1})"
+        },
+        {
+            "type": "collections",
+            "command": "getCollectionNames",
+            "eval": "db.getCollectionNames()"
+        },
+        {
+            "type": "fields",
+            "collection": "",
+            "eval": "db.getCollection('COLLECTION').findOne()"
+        },
+        {
+            "type": "data",
+            "collection": "",
+            "field": "",
+            "conditions": {},
+            "limit": 0,
+            "eval": "db.getCollection('COLLECTION').find(CONDITIONS).limit(LIMIT)"
+        }
     ]
 }

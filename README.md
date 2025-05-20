@@ -1,105 +1,204 @@
-# NoSQLi
+# NoSQLi - Advanced NoSQL Injection & Enumeration Tool
 
-A powerful Go-based NoSQL injection vulnerability scanner that automatically detects and tests for NoSQL injection vulnerabilities across multiple database types. Built with automation and ease of use in mind.
+A powerful Go-based NoSQL injection scanner that can detect vulnerabilities, perform database enumeration, and extract data from various NoSQL databases.
 
-## Features
+## 🚀 Features
 
 - 🔍 Automatic NoSQL database type detection
-- 🎯 Support for multiple NoSQL databases (MongoDB, CouchDB, Elasticsearch, Firebase)
-- 📝 Custom payload management via external JSON files
-- 🚀 Dynamic injection strategies for both GET and POST requests
-- 📊 Detailed JSON reports
-- 🎨 Colored terminal output
-- 🔒 Authentication support via headers and cookies
+- 💉 Advanced injection techniques (Authentication bypass, Time-based, Error-based)
+- 📊 Database enumeration capabilities
+- 🗄️ Support for multiple NoSQL databases:
+  - MongoDB
+  - CouchDB
+  - Elasticsearch
+  - Firebase
+- 📝 Detailed JSON reports
+- 🔐 Custom headers and authentication support
+- 🎯 Precise targeting with multiple payload types
 
-## Installation
+## 🛠️ Installation
 
+### Option 1: Direct Installation
 ```bash
-# Install directly using go
+# Install directly using Go
 go install github.com/Silent-Xploit/NoSQLi@latest
+```
 
-# Or clone and build manually
+### Option 2: Build from Source
+```bash
+# Clone the repository
 git clone https://github.com/Silent-Xploit/NoSQLi.git
+
+# Change directory
 cd NoSQLi
-go build
+
+# Build the tool
+go build -o nosqli
 ```
 
-## Usage
+## 📚 Usage Guide
 
-Basic usage:
-
+### Basic Syntax
 ```bash
-# Simple scan
-NoSQLi --url "https://target.com/api/login" --data '{"username":"admin","password":"test123"}'
+./nosqli --url <target_url> [options]
 ```
 
-Full options:
+### Common Use Cases
 
+1. Basic Vulnerability Scan:
 ```bash
-python nosqli_scanner.py \
-  --url https://target.com/api/login \
+./nosqli --url "http://target.com/api/login" \
   --method POST \
-  --headers '{"Authorization": "Bearer token"}' \
-  --cookies "session=abc123" \
-  --data '{"username":"admin","password":"test123"}' \
-  --payloads payloads/ \
-  --db-type mongodb
+  --data '{"username":"admin","password":"test"}'
 ```
 
-## Arguments
+2. Authentication Bypass Attempt:
+```bash
+./nosqli --url "http://target.com/login" \
+  --method POST \
+  --data '{"user":"admin","pass":"test"}' \
+  --headers '{"Content-Type": "application/json"}'
+```
 
-- `--url`: Target endpoint URL (required)
-- `--method`: HTTP method (GET or POST) (required)
-- `--headers`: Custom headers as JSON string
-- `--cookies`: Raw cookie string
-- `--data`: JSON body for POST requests
-- `--payloads`: Path to payload directory (required)
-- `--db-type`: Force specific database type (optional)
+3. Database Enumeration:
+```bash
+./nosqli --url "http://target.com/api" \
+  --enum \
+  --enum-type databases
+```
 
-## Payload Files
+4. Extract Data from Collection:
+```bash
+./nosqli --url "http://target.com/api" \
+  --enum \
+  --enum-type data \
+  --collection users \
+  --field "username,email" \
+  --limit 10
+```
 
-Payload files are stored in the `payloads/` directory:
-- `mongo.json`: MongoDB-specific payloads
-- `couchdb.json`: CouchDB-specific payloads
-- `elasticsearch.json`: Elasticsearch-specific payloads
-- `firebase.json`: Firebase-specific payloads
+## 🎯 Command Line Flags
 
-## Output
+### Essential Flags
+- `-u, --url` (Required)
+  - Target URL to scan
+  - Example: `--url "http://target.com/api"`
 
-The tool generates a JSON report containing:
-- Scan information (timestamp, target, etc.)
-- Detected vulnerabilities
-- Error logs
-- Raw test results
+- `-m, --method`
+  - HTTP method to use (GET/POST)
+  - Default: Auto-detected based on URL and data
+  - Example: `--method POST`
 
-## Example Report
+### Authentication & Headers
+- `-H, --headers`
+  - Custom HTTP headers as JSON string
+  - Example: `--headers '{"Authorization": "Bearer token123"}'`
 
+- `-c, --cookies`
+  - Cookie string for authenticated requests
+  - Example: `--cookies "session=abc123; token=xyz"`
+
+- `-d, --data`
+  - POST data as JSON string
+  - Example: `--data '{"username":"admin"}'`
+
+### Database Options
+- `-t, --db-type`
+  - Force specific database type
+  - Values: mongodb, couchdb, elasticsearch, firebase
+  - Example: `--db-type mongodb`
+
+### Enumeration Flags
+- `-e, --enum`
+  - Enable database enumeration mode
+  - Example: `--enum`
+
+- `--enum-type`
+  - Type of enumeration to perform
+  - Values: databases, collections, fields, data
+  - Example: `--enum-type collections`
+
+- `--collection`
+  - Specify collection/table to enumerate
+  - Example: `--collection users`
+
+- `--field`
+  - Fields to extract (comma-separated)
+  - Example: `--field "username,email,role"`
+
+- `--where`
+  - Conditions for data extraction (JSON format)
+  - Example: `--where '{"role":"admin"}'`
+
+- `--limit`
+  - Limit number of results
+  - Example: `--limit 10`
+
+## 📊 Example Output
+
+```
+    _   __      _____ ____    __    _ 
+   / | / /___  / ___// __ \  / /   (_)
+  /  |/ / __ \ \__ \/ / / / / /   / / 
+ / /|  / /_/ /___/ / /_/ / / /___/ /  
+/_/ |_/\____//____/\___\_\/_____/_/   
+
+🔍 Starting NoSQL Injection Scanner
+Target: http://target.com/api
+
+✅ Detected database: mongodb
+✅ Loaded payloads
+
+📊 Enumeration Results:
+Found databases:
+- admin
+- users
+- config
+
+Found collections in 'users':
+- accounts
+- profiles
+- settings
+
+Extracted data from 'accounts':
+ID | Username | Email | Role
+--------------------------------
+1  | admin    | admin@site.com | admin
+2  | user1    | user1@site.com | user
+```
+
+## 📋 Generated Reports
+
+The tool generates a detailed JSON report containing:
 ```json
 {
   "scan_info": {
-    "url": "https://target.com/login",
+    "url": "http://target.com/api",
     "method": "POST",
-    "detected_db": "MongoDB",
-    "timestamp": "2025-05-20 10:00:00",
-    "total_tests": 50,
-    "vulnerable_count": 2
+    "detected_db": "mongodb",
+    "timestamp": "2025-05-20T10:30:00Z"
   },
   "vulnerabilities": [
     {
-      "vulnerable": true,
-      "payload": {"$ne": null},
-      "parameter": "password",
-      "category": "auth_bypass",
-      "reason": "Authentication bypass detected"
+      "type": "Authentication Bypass",
+      "payload": {"username": {"$ne": null}},
+      "success": true
     }
-  ]
+  ],
+  "enumeration": {
+    "databases": ["admin", "users"],
+    "collections": ["accounts", "profiles"],
+    "extracted_data": [
+      // Array of extracted records
+    ]
+  }
 }
 ```
 
-## Security Note
+## ⚠️ Security Notice
 
-This tool is for educational and security testing purposes only. Always obtain proper authorization before testing any systems you don't own.
+This tool is for authorized security testing only. Unauthorized testing of systems you don't own or have permission to test is illegal.
 
-## License
+## 📜 License
 
-MIT License
+MIT License - See LICENSE file for details

@@ -25,19 +25,36 @@ const (
 
 // ScanOptions holds the configuration for the scanner
 type ScanOptions struct {
-	URL      string
-	Method   string
-	Headers  map[string]string
-	Cookies  string
-	Data     string
-	Payloads string
-	DBType   string
+	URL        string
+	Method     string
+	Headers    map[string]string
+	Cookies    string
+	Data       string
+	Payloads   string
+	DBType     string
+	Enumerate  bool
+	EnumType   string // "databases", "collections", "fields", "data"
+	Collection string // Collection/table to enumerate
+	Field      string // Field to enumerate
+	Where      string // Custom conditions for data enumeration
+	Limit      int    // Limit the number of results
 }
 
 // PayloadFile represents the structure of our payload JSON files
 type PayloadFile struct {
 	AuthBypass []map[string]interface{} `json:"auth_bypass"`
 	Injection  []map[string]interface{} `json:"injection"`
+	Enumerate  []map[string]interface{} `json:"enumerate"`
+}
+
+// EnumResult represents enumeration results
+type EnumResult struct {
+	Type     string      `json:"type"`
+	Name     string      `json:"name"`
+	Count    int         `json:"count,omitempty"`
+	Fields   []string    `json:"fields,omitempty"`
+	Data     [][]string  `json:"data,omitempty"`
+	Metadata interface{} `json:"metadata,omitempty"`
 }
 
 // Scanner represents our NoSQL injection scanner
@@ -46,6 +63,7 @@ type Scanner struct {
 	client     *http.Client
 	payloads   PayloadFile
 	detectedDB string
+	report     map[string]interface{}
 }
 
 // NewScanner creates a new scanner instance
@@ -55,6 +73,7 @@ func NewScanner(options *ScanOptions) *Scanner {
 		client: &http.Client{
 			Timeout: time.Second * 10,
 		},
+		report: make(map[string]interface{}),
 	}
 }
 
@@ -240,33 +259,262 @@ func (s *Scanner) testPayload(payload map[string]interface{}, paramName string) 
 	return s.compareResponses(baseResp, injResp)
 }
 
-// detectMethod determines the appropriate HTTP method based on the URL and data
-func (s *Scanner) detectMethod() string {
-	// If POST data is provided, use POST method
-	if s.options.Data != "" {
-		return http.MethodPost
+// testEnumPayload tests enumeration payloads
+func (s *Scanner) testEnumPayload(payload map[string]interface{}, paramName string) (*EnumResult, error) {
+	// Modify request data based on payload
+	var injData string
+	if s.options.Method == http.MethodPost {
+		var jsonData map[string]interface{}
+		json.Unmarshal([]byte(s.options.Data), &jsonData)
+		jsonData[paramName] = payload
+		injDataBytes, _ := json.Marshal(jsonData)
+		injData = string(injDataBytes)
 	}
 
-	// If URL contains query parameters, likely a GET endpoint
-	if strings.Contains(s.options.URL, "?") || 
-	   strings.Contains(strings.ToLower(s.options.URL), "search") ||
-	   strings.Contains(strings.ToLower(s.options.URL), "query") ||
-	   strings.Contains(strings.ToLower(s.options.URL), "get") {
-		return http.MethodGet
+	// Create request
+	req, err := http.NewRequest(s.options.Method, s.options.URL, strings.NewReader(injData))
+	if err != nil {
+		return nil, err
 	}
 
-	// For login/auth endpoints, prefer POST
-	if strings.Contains(strings.ToLower(s.options.URL), "login") ||
-	   strings.Contains(strings.ToLower(s.options.URL), "auth") ||
-	   strings.Contains(strings.ToLower(s.options.URL), "signin") {
-		return http.MethodPost
+	// Add headers and cookies
+	for k, v := range s.options.Headers {
+		req.Header.Set(k, v)
+	}
+	if s.options.Cookies != "" {
+		req.Header.Set("Cookie", s.options.Cookies)
 	}
 
-	// Default to POST for better injection testing
-	return http.MethodPost
+	// Make request
+	resp, err := s.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+
+	// Parse response
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+
+	// Try to extract information from response
+	result := &EnumResult{
+		Type: s.options.EnumType,
+	}
+
+	// Parse response based on database type and enumeration type
+	switch s.detectedDB {
+	case "mongodb":
+		return s.parseMongoDBResponse(body, result)
+	case "couchdb":
+		return s.parseCouchDBResponse(body, result)
+	case "elasticsearch":
+		return s.parseElasticsearchResponse(body, result)
+	case "firebase":
+		return s.parseFirebaseResponse(body, result)
+	}
+
+	return result, nil
 }
 
-// scan performs the full vulnerability scan
+// parseMongoDBResponse parses MongoDB enumeration response
+func (s *Scanner) parseMongoDBResponse(body []byte, result *EnumResult) (*EnumResult, error) {
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return result, err
+	}
+
+	switch s.options.EnumType {
+	case "databases":
+		if databases, ok := data["databases"].([]interface{}); ok {
+			for _, db := range databases {
+				if dbName, ok := db.(map[string]interface{})["name"].(string); ok {
+					result.Fields = append(result.Fields, dbName)
+				}
+			}
+		}
+	case "collections":
+		if collections, ok := data["collections"].([]interface{}); ok {
+			for _, col := range collections {
+				if colName, ok := col.(string); ok {
+					result.Fields = append(result.Fields, colName)
+				}
+			}
+		}
+	case "fields":
+		if doc, ok := data["result"].(map[string]interface{}); ok {
+			for field := range doc {
+				result.Fields = append(result.Fields, field)
+			}
+		}
+	case "data":
+		if docs, ok := data["result"].([]interface{}); ok {
+			for _, doc := range docs {
+				if docMap, ok := doc.(map[string]interface{}); ok {
+					var row []string
+					for _, field := range result.Fields {
+						if val, ok := docMap[field]; ok {
+							row = append(row, fmt.Sprintf("%v", val))
+						} else {
+							row = append(row, "")
+						}
+					}
+					result.Data = append(result.Data, row)
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// parseCouchDBResponse parses CouchDB enumeration response
+func (s *Scanner) parseCouchDBResponse(body []byte, result *EnumResult) (*EnumResult, error) {
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return result, err
+	}
+
+	switch s.options.EnumType {
+	case "databases":
+		if databases, ok := data["databases"].([]interface{}); ok {
+			for _, db := range databases {
+				if dbName, ok := db.(string); ok {
+					result.Fields = append(result.Fields, dbName)
+				}
+			}
+		}
+	case "collections":
+		if docs, ok := data["rows"].([]interface{}); ok {
+			for _, doc := range docs {
+				if docMap, ok := doc.(map[string]interface{}); ok {
+					if id, ok := docMap["id"].(string); ok {
+						result.Fields = append(result.Fields, id)
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// parseElasticsearchResponse parses Elasticsearch enumeration response
+func (s *Scanner) parseElasticsearchResponse(body []byte, result *EnumResult) (*EnumResult, error) {
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return result, err
+	}
+
+	switch s.options.EnumType {
+	case "databases":
+		if indices, ok := data["indices"].(map[string]interface{}); ok {
+			for index := range indices {
+				result.Fields = append(result.Fields, index)
+			}
+		}
+	case "fields":
+		if mappings, ok := data["mappings"].(map[string]interface{}); ok {
+			if properties, ok := mappings["properties"].(map[string]interface{}); ok {
+				for field := range properties {
+					result.Fields = append(result.Fields, field)
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// parseFirebaseResponse parses Firebase enumeration response
+func (s *Scanner) parseFirebaseResponse(body []byte, result *EnumResult) (*EnumResult, error) {
+	var data map[string]interface{}
+	if err := json.Unmarshal(body, &data); err != nil {
+		return result, err
+	}
+
+	// Extract fields from Firebase response
+	if s.options.EnumType == "data" {
+		var fields []string
+		var extractFields func(map[string]interface{}, string)
+		
+		extractFields = func(obj map[string]interface{}, prefix string) {
+			for k, v := range obj {
+				field := k
+				if prefix != "" {
+					field = prefix + "." + k
+				}
+				if nested, ok := v.(map[string]interface{}); ok {
+					extractFields(nested, field)
+				} else {
+					fields = append(fields, field)
+				}
+			}
+		}
+
+		if root, ok := data.(map[string]interface{}); ok {
+			extractFields(root, "")
+		}
+		result.Fields = fields
+	}
+
+	return result, nil
+}
+
+// enumerateData performs the data enumeration scan
+func (s *Scanner) enumerateData() ([]*EnumResult, error) {
+	color.Blue("\n🔍 Starting database enumeration...")
+	
+	var results []*EnumResult
+
+	// Load enumeration payloads
+	if err := s.loadPayloads(); err != nil {
+		return nil, err
+	}
+
+	// Get enumeration payloads based on database type
+	payloads := s.payloads.Enumerate
+
+	color.Yellow("\nExecuting enumeration queries...")
+	
+	for _, payload := range payloads {
+		// Skip payloads not matching the requested enumeration type
+		if payloadType, ok := payload["type"].(string); !ok || payloadType != s.options.EnumType {
+			continue
+		}
+
+		// Customize payload based on user options
+		if s.options.Collection != "" {
+			payload["collection"] = s.options.Collection
+		}
+		if s.options.Field != "" {
+			payload["field"] = s.options.Field
+		}
+		if s.options.Where != "" {
+			if conditions := gjson.Get(s.options.Where, "@this"); conditions.Exists() {
+				payload["conditions"] = conditions.Value()
+			}
+		}
+		if s.options.Limit > 0 {
+			payload["limit"] = s.options.Limit
+		}
+
+		result, err := s.testEnumPayload(payload, "query")
+		if err != nil {
+			color.Red("Error executing enumeration payload: %v", err)
+			continue
+		}
+
+		if result != nil && len(result.Fields) > 0 {
+			results = append(results, result)
+		}
+	}
+
+	return results, nil
+}
+
+// scan performs the full vulnerability and enumeration scan
 func (s *Scanner) scan() error {
 	// Ensure payloads exist
 	if err := s.ensurePayloadsExist(); err != nil {
@@ -318,6 +566,53 @@ func (s *Scanner) scan() error {
 				"reason":  reason,
 			})
 		}
+	}
+
+	// If enumeration was requested, perform it
+	if s.options.Enumerate {
+		results, err := s.enumerateData()
+		if err != nil {
+			return fmt.Errorf("enumeration failed: %v", err)
+		}
+
+		// Print enumeration results
+		color.Blue("\n📊 Enumeration Results:")
+		for _, result := range results {
+			switch result.Type {
+			case "databases":
+				color.Green("\nFound databases:")
+				for _, db := range result.Fields {
+					fmt.Printf("- %s\n", db)
+				}
+
+			case "collections":
+				color.Green("\nFound collections/tables:")
+				for _, col := range result.Fields {
+					fmt.Printf("- %s\n", col)
+				}
+
+			case "fields":
+				color.Green("\nFound fields/columns:")
+				for _, field := range result.Fields {
+					fmt.Printf("- %s\n", field)
+				}
+
+			case "data":
+				if len(result.Data) > 0 {
+					color.Green("\nExtracted data:")
+					// Print header
+					fmt.Println(strings.Join(result.Fields, " | "))
+					fmt.Println(strings.Repeat("-", len(strings.Join(result.Fields, " | "))))
+					// Print data rows
+					for _, row := range result.Data {
+						fmt.Println(strings.Join(row, " | "))
+					}
+				}
+			}
+		}
+
+		// Add enumeration results to the report
+		s.report["enumeration"] = results
 	}
 
 	// Generate report
@@ -374,13 +669,26 @@ func main() {
 			scanner := NewScanner(&opts)
 			return scanner.scan()
 		},
-	}
-	rootCmd.Flags().StringVarP(&opts.URL, "url", "u", "", "Target URL")
+	}	rootCmd.Flags().StringVarP(&opts.URL, "url", "u", "", "Target URL")
 	rootCmd.Flags().StringVarP(&opts.Method, "method", "m", "", "HTTP method (auto-detected if not specified)")
 	rootCmd.Flags().StringVarP(&headersStr, "headers", "H", "", "Headers as JSON string")
 	rootCmd.Flags().StringVarP(&opts.Cookies, "cookies", "c", "", "Cookie string")
 	rootCmd.Flags().StringVarP(&opts.Data, "data", "d", "", "POST data as JSON string")
 	rootCmd.Flags().StringVarP(&opts.DBType, "db-type", "t", "", "Force database type (mongodb, couchdb, elasticsearch, firebase)")
+	
+	// Database enumeration flags
+	rootCmd.Flags().BoolVarP(&opts.Enumerate, "enum", "e", false, "Enable database enumeration")
+	rootCmd.Flags().StringVar(&opts.EnumType, "enum-type", "", "Type of enumeration (databases, collections, fields, data)")
+	rootCmd.Flags().StringVar(&opts.Collection, "collection", "", "Collection/table to enumerate")
+	rootCmd.Flags().StringVar(&opts.Field, "field", "", "Field/column to enumerate")
+	rootCmd.Flags().StringVar(&opts.Where, "where", "", "Conditions for data enumeration (JSON format)")
+	rootCmd.Flags().IntVar(&opts.Limit, "limit", 0, "Limit the number of results")
+	rootCmd.Flags().BoolVarP(&opts.Enumerate, "enumerate", "e", false, "Enable database enumeration")
+	rootCmd.Flags().StringVarP(&opts.EnumType, "enum-type", "T", "", "Enumeration type (databases, collections, fields, data)")
+	rootCmd.Flags().StringVarP(&opts.Collection, "collection", "C", "", "Collection/table to enumerate")
+	rootCmd.Flags().StringVarP(&opts.Field, "field", "f", "", "Field to enumerate")
+	rootCmd.Flags().StringVarP(&opts.Where, "where", "w", "", "Custom conditions for data enumeration")
+	rootCmd.Flags().IntVarP(&opts.Limit, "limit", "l", 0, "Limit the number of results")
 
 	rootCmd.MarkFlagRequired("url")
 

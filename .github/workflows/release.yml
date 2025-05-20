@@ -1,0 +1,44 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    name: Build and Release
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.21'
+    
+    - name: Build
+      run: |
+        mkdir -p bin
+        GOOS=linux GOARCH=amd64 go build -o bin/nosqli-scanner-linux-amd64 main.go
+        GOOS=windows GOARCH=amd64 go build -o bin/nosqli-scanner-windows-amd64.exe main.go
+        GOOS=darwin GOARCH=amd64 go build -o bin/nosqli-scanner-darwin-amd64 main.go
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          bin/nosqli-scanner-linux-amd64
+          bin/nosqli-scanner-windows-amd64.exe
+          bin/nosqli-scanner-darwin-amd64
+        body: |
+          NoSQL Injection Scanner Release
+          
+          ## Changes
+          - Automated release for all major platforms
+          
+          ## Installation
+          Download the appropriate binary for your platform and add it to your PATH.
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
